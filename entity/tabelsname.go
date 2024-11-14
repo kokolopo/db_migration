@@ -39,7 +39,7 @@ type IRepository interface {
 	GetDescColumnDB1(tabelName string) ([]ColumnDescribtion, error)
 	GetDescColumnDB2(tabelName string) ([]ColumnDescribtion, error)
 	ExecMigrationTable(tableSource string, tableTarget string, page int, limit int, email string) (bool, error)
-	MigrateRelatedData(email string) (bool, error)
+	MigrateRelatedData(email string, page, limit int) (bool, error)
 	DeleteReletedData(email string) (bool, error)
 	FetchDataTable(tablename string, page int, source string) ([]map[string]any, error)
 }
@@ -150,7 +150,10 @@ func (r *repository) ExecMigrationTable(tableSource string, tableTarget string, 
 	return true, nil
 }
 
-func (r *repository) MigrateRelatedData(email string) (bool, error) {
+func (r *repository) MigrateRelatedData(email string, page int, limit int) (bool, error) {
+	// Jumlah data per halaman
+	offset := (page - 1) * limit
+
 	// Start transaction for DB2 (target database)
 	tx := r.DB2.Begin()
 	if tx.Error != nil {
@@ -164,7 +167,7 @@ func (r *repository) MigrateRelatedData(email string) (bool, error) {
 		}
 	}()
 
-	res, err := utils.MigrateRelatedData(email, tx, r.DB1, r.DB2)
+	res, err := utils.MigrateRelatedData(email, limit, offset, tx, r.DB1, r.DB2)
 	if err != nil {
 		return false, err
 	}

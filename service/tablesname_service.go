@@ -8,7 +8,7 @@ type IService interface {
 	GetColumnsDescDB1(string) ([]entity.ColumnDescribtion, error)
 	GetColumnsDescDB2(string) ([]entity.ColumnDescribtion, error)
 	MigrateTable(string, string, int, int, string) (bool, error)
-	MigrateReletedData(string) (bool, error)
+	MigrateReletedData(string, int, int) (bool, error)
 	DeleteReletedData(string) (bool, error)
 	GetDataTable(string, int, string) ([]map[string]any, error)
 }
@@ -65,8 +65,8 @@ func (s *service) MigrateTable(tableSource string, tableTarget string, page int,
 	return res, nil
 }
 
-func (s *service) MigrateReletedData(email string) (bool, error) {
-	res, err := s.repository.MigrateRelatedData(email)
+func (s *service) MigrateReletedData(email string, page int, limit int) (bool, error) {
+	res, err := s.repository.MigrateRelatedData(email, page, limit)
 	if err != nil {
 		return false, err
 	}

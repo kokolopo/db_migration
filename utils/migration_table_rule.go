@@ -185,13 +185,24 @@ func DeleteReletedDataRule(tx, db2 *gorm.DB, email string) (bool, error) {
 	return true, nil
 }
 
-func MigrateRelatedData(email string, tx, db1, db2 *gorm.DB) (bool, error) {
+func MigrateRelatedData(email string, limit int, offset int, tx, db1, db2 *gorm.DB) (bool, error) {
 	// ambil data dari tabel; web_tbl_user, client_tbl_kyc, client_tbl_kyc_draft,
 	// client_tbl_detail_bankaccount_draft, client_tbl_detail_bankaccount, client_tbl_plan,
 	// client_tbl_plan_portfolio, client_tbl_plan_redemption,
 	// client_tbl_plan_portfolio_unit, web_tbl_transaction
 
 	if email != "" {
+		tx := db2.Begin()
+		if tx.Error != nil {
+			return false, tx.Error
+		}
+
+		// Defer rollback in case of error - will be ignored if committed successfully
+		defer func() {
+			if r := recover(); r != nil {
+				tx.Rollback()
+			}
+		}()
 		var (
 			cred []ForeignClient
 
@@ -292,16 +303,30 @@ func MigrateRelatedData(email string, tx, db1, db2 *gorm.DB) (bool, error) {
 		}
 
 		// client_tbl_kyc_draft
-		if err := db2.Table("client_tbl_kyc_draft").Create(&kcyDraftData).Error; err != nil {
-			tx.Rollback()
-			return false, err
+		if kcyDraftData != nil {
+			if err := db2.Table("client_tbl_kyc_draft").Create(&kcyDraftData).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
 		}
 
 		// client_tbl_kyc
 		delete(kycData, "UserID")
+		if kycData["RiskProfileID"] == 0 {
+			delete(kycData, "RiskProfileID")
+			kycData["RiskProfileID"] = 3
+		}
 		if err := db2.Table("client_tbl_kyc").Create(&kycData).Error; err != nil {
 			tx.Rollback()
 			return false, err
+		}
+
+		// client_tbl_plan
+		if userPlanData != nil {
+			if err := db2.Table("client_tbl_plan").Create(&userPlanData).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
 		}
 
 		//client_tbl_detail_bankaccount
@@ -315,58 +340,58 @@ func MigrateRelatedData(email string, tx, db1, db2 *gorm.DB) (bool, error) {
 		}
 
 		//client_tbl_detail_bankaccount_draft
-		if err := db2.Table("client_tbl_detail_bankaccount_draft").Create(&bankAccDraftData).Error; err != nil {
-			tx.Rollback()
-			return false, err
-		}
-
-		// client_tbl_plan
-		if err := db2.Table("client_tbl_plan").Create(&userPlanData).Error; err != nil {
-			tx.Rollback()
-			return false, err
+		if bankAccDraftData != nil {
+			if err := db2.Table("client_tbl_detail_bankaccount_draft").Create(&bankAccDraftData).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
 		}
 
 		// web_tbl_transaction
-		for _, v := range trnsactionData {
-			switch v["TrxTypeID"] {
-			case 5:
-				delete(v, "TrxTypeID")
-				v["TrxTypeID"] = 3
-			case 21:
-				delete(v, "TrxTypeID")
-				v["TrxTypeID"] = 1
-			case 22:
-				delete(v, "TrxTypeID")
-				v["TrxTypeID"] = 2
-			}
-			if err := db2.Table("web_tbl_transaction").Create(&v).Error; err != nil {
-				tx.Rollback()
-				return false, err
-			}
+		if trnsactionData != nil {
+			for _, v := range trnsactionData {
+				switch v["TrxTypeID"] {
+				case 5:
+					delete(v, "TrxTypeID")
+					v["TrxTypeID"] = 3
+				case 21:
+					delete(v, "TrxTypeID")
+					v["TrxTypeID"] = 1
+				case 22:
+					delete(v, "TrxTypeID")
+					v["TrxTypeID"] = 2
+				}
+				if err := db2.Table("web_tbl_transaction").Create(&v).Error; err != nil {
+					tx.Rollback()
+					return false, err
+				}
 
-			if err := db2.Exec("UPDATE web_tbl_transaction SET TrxTypeID = 3 WHERE TrxTypeID = 5").Error; err != nil {
-				tx.Rollback()
-				return false, err
-			}
-			if err := db2.Exec("UPDATE web_tbl_transaction SET TrxTypeID = 1 WHERE TrxTypeID = 21").Error; err != nil {
-				tx.Rollback()
-				return false, err
-			}
-			if err := db2.Exec("UPDATE web_tbl_transaction SET TrxTypeID = 2 WHERE TrxTypeID = 22").Error; err != nil {
-				tx.Rollback()
-				return false, err
+				if err := db2.Exec("UPDATE web_tbl_transaction SET TrxTypeID = 3 WHERE TrxTypeID = 5").Error; err != nil {
+					tx.Rollback()
+					return false, err
+				}
+				if err := db2.Exec("UPDATE web_tbl_transaction SET TrxTypeID = 1 WHERE TrxTypeID = 21").Error; err != nil {
+					tx.Rollback()
+					return false, err
+				}
+				if err := db2.Exec("UPDATE web_tbl_transaction SET TrxTypeID = 2 WHERE TrxTypeID = 22").Error; err != nil {
+					tx.Rollback()
+					return false, err
+				}
 			}
 		}
 
 		//client_tbl_plan_portfolio
-		for _, v := range planPortfolioData {
-			t := time.Time{}
-			if v["NextAutoDebetDate"] == t {
-				v["NextAutoDebetDate"] = nil
-			}
-			if err := db2.Table("client_tbl_plan_portfolio").Create(&v).Error; err != nil {
-				tx.Rollback()
-				return false, err
+		if planPortfolioData != nil {
+			for _, v := range planPortfolioData {
+				t := time.Time{}
+				if v["NextAutoDebetDate"] == t {
+					v["NextAutoDebetDate"] = nil
+				}
+				if err := db2.Table("client_tbl_plan_portfolio").Create(&v).Error; err != nil {
+					tx.Rollback()
+					return false, err
+				}
 			}
 		}
 
@@ -379,31 +404,362 @@ func MigrateRelatedData(email string, tx, db1, db2 *gorm.DB) (bool, error) {
 		}
 
 		//vw_portfolio_unit_client
-		for _, v := range userUnitData {
-			delete(v, "ClientID")
-			if err := db2.Table("client_tbl_plan_portfolio_unit").Create(&v).Error; err != nil {
-				tx.Rollback()
-				return false, err
+		if userUnitData != nil {
+			for _, v := range userUnitData {
+				delete(v, "ClientID")
+				if err := db2.Table("client_tbl_plan_portfolio_unit").Create(&v).Error; err != nil {
+					tx.Rollback()
+					return false, err
+				}
 			}
 		}
+	}
 
+	if email == "" {
+		tx := db2.Begin()
+		if tx.Error != nil {
+			return false, tx.Error
+		}
+
+		// Defer rollback in case of error - will be ignored if committed successfully
+		defer func() {
+			if r := recover(); r != nil {
+				tx.Rollback()
+			}
+		}()
+
+		// ambil data dari page and limit
+		var dataUsers []map[string]any
+		sql := fmt.Sprintf("SELECT usr.* FROM web_tbl_user usr JOIN client_tbl_kyc ctk ON ctk.UserID = usr.UserID WHERE ctk.SAAgencyID IS NULL OR ctk.SAAgencyID = '' limit %d offset %d", limit, offset)
+		if err := db1.Raw(sql).Scan(&dataUsers).Error; err != nil {
+			tx.Rollback()
+			return false, err
+		}
+
+		for _, v := range dataUsers {
+			email := v["UserLogin"].(string)
+			migrateTableRelated(email, db1, db2)
+		}
 	}
 
 	return true, nil
 }
 
-// err = db1.Exec("SELECT * FROM client_tbl_plan_portfolio WHERE ClientID = ?", cred[0].ClientID).Scan(&kycData).Error
-// 		if err != nil {
-// 			tx.Rollback()
-// 			return false, err
-// 		}
-// 		err = db1.Exec("SELECT * FROM client_tbl_plan_redemption WHERE ClientID = ?", cred[0].ClientID).Scan(&kycData).Error
-// 		if err != nil {
-// 			tx.Rollback()
-// 			return false, err
-// 		}
-// 		err = db1.Exec("SELECT * FROM client_tbl_plan_portfolio_unit WHERE ClientID = ?", cred[0].ClientID).Scan(&kycData).Error
-// 		if err != nil {
-// 			tx.Rollback()
-// 			return false, err
-// 		}
+func migrateTableRelated(email string, db1, db2 *gorm.DB) (bool, error) {
+	type Errorrs struct {
+		UserID   int
+		ClientID string
+		Email    any
+		Error    string
+	}
+
+	if email != "" {
+		tx := db2.Begin()
+		if tx.Error != nil {
+			return false, tx.Error
+		}
+
+		// Defer rollback in case of error - will be ignored if committed successfully
+		defer func() {
+			if r := recover(); r != nil {
+				tx.Rollback()
+			}
+		}()
+		var (
+			cred []ForeignClient
+
+			userData           map[string]any
+			kycData            map[string]any
+			kcyDraftData       map[string]any
+			bankAccDraftData   []map[string]any
+			bankAccData        []map[string]any
+			userPlanData       []map[string]any
+			trnsactionData     []map[string]any
+			planPortfolioData  []map[string]any
+			planRedemptionData []map[string]any
+			userUnitData       []map[string]any
+		)
+
+		var sql = fmt.Sprintf("SELECT kyc.ClientID, usr.UserID, plan.PlanID FROM client_tbl_kyc kyc JOIN web_tbl_user usr ON usr.KycID = kyc.KycID JOIN client_tbl_plan plan ON plan.ClientID = kyc.ClientID WHERE kyc.Email = '%s'", email)
+		err := db1.Raw(sql).Scan(&cred).Error
+		if err != nil {
+			// tx.Rollback()
+			if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
+			// return false, err
+		}
+		fmt.Println(cred)
+
+		err = db1.Raw(fmt.Sprintf("SELECT * FROM web_tbl_user WHERE UserID = %d", cred[0].UserID)).Scan(&userData).Error
+		if err != nil {
+			// tx.Rollback()
+			if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, Email: "email", Error: err.Error()}).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
+			// return false, err
+		}
+
+		err = db1.Raw(fmt.Sprintf("SELECT * FROM client_tbl_kyc_draft WHERE UserID = %d", cred[0].UserID)).Scan(&kcyDraftData).Error
+		if err != nil {
+			// tx.Rollback()
+			if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, Email: "email", Error: err.Error()}).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
+			// return false, err
+		}
+
+		err = db1.Raw(fmt.Sprintf("SELECT * FROM client_tbl_kyc WHERE ClientID = '%s'", cred[0].ClientID)).Scan(&kycData).Error
+		if err != nil {
+			// tx.Rollback()
+			if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
+			// return false, err
+		}
+
+		err = db1.Raw(fmt.Sprintf("SELECT * FROM client_tbl_detail_bankaccount_draft WHERE UserID = %d", cred[0].UserID)).Scan(&bankAccDraftData).Error
+		if err != nil {
+			// tx.Rollback()
+			if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
+			// return false, err
+		}
+
+		err = db1.Raw(fmt.Sprintf("SELECT * FROM client_tbl_detail_bankaccount WHERE UserID = %d", cred[0].UserID)).Scan(&bankAccData).Error
+		if err != nil {
+			// tx.Rollback()
+			if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
+			// return false, err
+		}
+
+		err = db1.Raw(fmt.Sprintf("SELECT * FROM client_tbl_plan WHERE ClientID = '%s'", cred[0].ClientID)).Scan(&userPlanData).Error
+		if err != nil {
+			// tx.Rollback()
+			if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
+			// return false, err
+		}
+
+		err = db1.Raw(fmt.Sprintf("SELECT tr.* FROM client_tbl_plan_portfolio_unit u JOIN client_tbl_plan plan on u.PlanID = plan.PlanID JOIN web_tbl_transaction tr ON u.TrxID = tr.TrxID WHERE u.PositionDate = (SELECT MAX(u2.PositionDate) FROM client_tbl_plan_portfolio_unit u2 WHERE u2.PortfolioID = u.PortfolioID AND u2.PlanID = u.PlanID AND EXISTS (SELECT 1 FROM client_tbl_plan p WHERE p.PlanID = u2.PlanID AND plan.ClientID = '%s')) AND u.UnitBalance > 0 ORDER BY u.PositionDate DESC", cred[0].ClientID)).Scan(&trnsactionData).Error
+		if err != nil {
+			// tx.Rollback()
+			if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
+			// return false, err
+		}
+
+		err = db1.Raw(fmt.Sprintf("SELECT pp.* FROM client_tbl_plan_portfolio_unit u JOIN client_tbl_plan plan on u.PlanID = plan.PlanID JOIN client_tbl_plan_portfolio pp ON u.PlanPortfolioID = pp.PlanPortfolioID WHERE u.PositionDate = (SELECT MAX(u2.PositionDate) FROM client_tbl_plan_portfolio_unit u2 WHERE u2.PortfolioID = u.PortfolioID AND u2.PlanID = u.PlanID AND EXISTS (SELECT 1 FROM client_tbl_plan p WHERE p.PlanID = u2.PlanID AND plan.ClientID = '%s')) AND u.PlanPortfolioID > 0 AND u.UnitBalance > 0 ORDER BY u.PositionDate DESC", cred[0].ClientID)).Scan(&planPortfolioData).Error
+		if err != nil {
+			// tx.Rollback()
+			if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
+			// return false, err
+		}
+
+		err = db1.Raw(fmt.Sprintf("SELECT pr.* FROM client_tbl_plan_portfolio_unit u JOIN client_tbl_plan plan on u.PlanID = plan.PlanID JOIN client_tbl_plan_redemption pr ON u.PlanRedemptionID = pr.PlanRedemptionID WHERE u.PositionDate = (SELECT MAX(u2.PositionDate) FROM client_tbl_plan_portfolio_unit u2 WHERE u2.PortfolioID = u.PortfolioID AND u2.PlanID = u.PlanID AND EXISTS (SELECT 1 FROM client_tbl_plan p WHERE p.PlanID = u2.PlanID AND plan.ClientID = '%s')) AND u.PlanRedemptionID > 0 AND u.UnitBalance > 0 ORDER BY u.PositionDate DESC", cred[0].ClientID)).Scan(&planRedemptionData).Error
+		if err != nil {
+			// tx.Rollback()
+			if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
+			// return false, err
+		}
+
+		err = db1.Raw(fmt.Sprintf("SELECT * FROM vw_portfolio_unit_client WHERE ClientID = '%s' AND UnitBalance > 0", cred[0].ClientID)).Scan(&userUnitData).Error
+		if err != nil {
+			// tx.Rollback()
+			if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
+			// return false, err
+		}
+
+		// fmt.Println(userUnitData)
+
+		// web_tbl_user
+		t := time.Time{}
+		if userData["UserLockDate"] == t {
+			userData["UserLockDate"] = nil
+		}
+		if userData["LastLogin"] == t {
+			userData["LastLogin"] = nil
+		}
+		userData["UserPhone"] = strings.ReplaceAll(userData["UserPhone"].(string), " ", "")
+		if err := db2.Table("web_tbl_user").Create(&userData).Error; err != nil {
+			// tx.Rollback()
+			if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
+			// return false, err
+		}
+
+		// client_tbl_kyc_draft
+		if kcyDraftData != nil {
+			if err := db2.Table("client_tbl_kyc_draft").Create(&kcyDraftData).Error; err != nil {
+				// tx.Rollback()
+				if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+					tx.Rollback()
+					return false, err
+				}
+				// return false, err
+			}
+		}
+
+		// client_tbl_kyc
+		delete(kycData, "UserID")
+		if kycData["RiskProfileID"] == 0 {
+			delete(kycData, "RiskProfileID")
+			kycData["RiskProfileID"] = 3
+		}
+		if err := db2.Table("client_tbl_kyc").Create(&kycData).Error; err != nil {
+			// tx.Rollback()
+			if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+				tx.Rollback()
+				return false, err
+			}
+			// return false, err
+		}
+
+		// client_tbl_plan
+		if userPlanData != nil {
+			if err := db2.Table("client_tbl_plan").Create(&userPlanData).Error; err != nil {
+				// tx.Rollback()
+				if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+					tx.Rollback()
+					return false, err
+				}
+				// return false, err
+			}
+		}
+
+		//client_tbl_detail_bankaccount
+		for _, ba := range bankAccData {
+			ba["ClientID"] = cred[0].ClientID
+			delete(ba, "UserID")
+			if err := db2.Table("client_tbl_detail_bankaccount").Create(&ba).Error; err != nil {
+				// tx.Rollback()
+				if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+					tx.Rollback()
+					return false, err
+				}
+				// return false, err
+			}
+		}
+
+		//client_tbl_detail_bankaccount_draft
+		if bankAccDraftData != nil {
+			if err := db2.Table("client_tbl_detail_bankaccount_draft").Create(&bankAccDraftData).Error; err != nil {
+				// tx.Rollback()
+				if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+					tx.Rollback()
+					return false, err
+				}
+				// return false, err
+			}
+		}
+
+		// web_tbl_transaction
+		if trnsactionData != nil {
+			for _, v := range trnsactionData {
+				switch v["TrxTypeID"] {
+				case 5:
+					delete(v, "TrxTypeID")
+					v["TrxTypeID"] = 3
+				case 21:
+					delete(v, "TrxTypeID")
+					v["TrxTypeID"] = 1
+				case 22:
+					delete(v, "TrxTypeID")
+					v["TrxTypeID"] = 2
+				}
+				if err := db2.Table("web_tbl_transaction").Create(&v).Error; err != nil {
+					// tx.Rollback()
+					if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+						tx.Rollback()
+						return false, err
+					}
+					// return false, err
+				}
+
+				if err := db2.Exec("UPDATE web_tbl_transaction SET TrxTypeID = 3 WHERE TrxTypeID = 5").Error; err != nil {
+					tx.Rollback()
+					return false, err
+				}
+				if err := db2.Exec("UPDATE web_tbl_transaction SET TrxTypeID = 1 WHERE TrxTypeID = 21").Error; err != nil {
+					tx.Rollback()
+					return false, err
+				}
+				if err := db2.Exec("UPDATE web_tbl_transaction SET TrxTypeID = 2 WHERE TrxTypeID = 22").Error; err != nil {
+					tx.Rollback()
+					return false, err
+				}
+			}
+		}
+
+		//client_tbl_plan_portfolio
+		if planPortfolioData != nil {
+			for _, v := range planPortfolioData {
+				t := time.Time{}
+				if v["NextAutoDebetDate"] == t {
+					v["NextAutoDebetDate"] = nil
+				}
+				if err := db2.Table("client_tbl_plan_portfolio").Create(&v).Error; err != nil {
+					// tx.Rollback()
+					if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+						tx.Rollback()
+						return false, err
+					}
+					// return false, err
+				}
+			}
+		}
+
+		//client_tbl_plan_redemption
+		if planRedemptionData != nil {
+			if err := db2.Table("client_tbl_plan_redemption").Create(&planRedemptionData).Error; err != nil {
+				// tx.Rollback()
+				if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+					tx.Rollback()
+					return false, err
+				}
+				// return false, err
+			}
+		}
+
+		//vw_portfolio_unit_client
+		if userUnitData != nil {
+			for _, v := range userUnitData {
+				delete(v, "ClientID")
+				if err := db2.Table("client_tbl_plan_portfolio_unit").Create(&v).Error; err != nil {
+					// tx.Rollback()
+					if err := db2.Table("error_migration_data").Create(Errorrs{UserID: cred[0].UserID, ClientID: cred[0].ClientID, Email: "email", Error: err.Error()}).Error; err != nil {
+						tx.Rollback()
+						return false, err
+					}
+					// return false, err
+				}
+			}
+		}
+	}
+
+	return true, nil
+}
