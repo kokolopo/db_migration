@@ -65,8 +65,8 @@ func (s *service) MigrateTable(tableSource string, tableTarget string, page int,
 	return res, nil
 }
 
-func (s *service) MigrateReletedData(email string, page int, limit int) (bool, error) {
-	res, err := s.repository.MigrateRelatedData(email, page, limit)
+func (s *service) MigrateReletedData(email string, offset int, limit int) (bool, error) {
+	res, err := s.repository.MigrateRelatedData(email, offset, limit)
 	if err != nil {
 		return false, err
 	}
