@@ -207,7 +207,7 @@ func MigrateRelatedData(email string, limit int, offset int, tx, db1, db2 *gorm.
 			userUnitData       []map[string]any
 		)
 
-		var sql = fmt.Sprintf("SELECT kyc.ClientID, usr.UserID, plan.PlanID FROM client_tbl_kyc kyc JOIN web_tbl_user usr ON usr.KycID = kyc.KycID JOIN client_tbl_plan plan ON plan.ClientID = kyc.ClientID WHERE usr.UserLogin = %s", email)
+		var sql = fmt.Sprintf("SELECT kyc.ClientID, usr.UserID, plan.PlanID FROM client_tbl_kyc kyc JOIN web_tbl_user usr ON usr.KycID = kyc.KycID LEFT JOIN client_tbl_plan plan ON plan.ClientID = kyc.ClientID WHERE usr.UserLogin = %s", email)
 		err := db1.Raw(sql).Scan(&cred).Error
 		if err != nil {
 			tx.Rollback()
